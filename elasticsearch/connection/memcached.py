@@ -1,11 +1,11 @@
 import time
-import json
 try:
-    from urllib import urlencode
+    import simplejson as json
 except ImportError:
-    from urllib.parse import urlencode
+    import json
 
 from ..exceptions import TransportError, ConnectionError, ImproperlyConfigured
+from ..compat import urlencode
 from .pooling import PoolingConnection
 
 class MemcachedConnection(PoolingConnection):
@@ -57,7 +57,7 @@ class MemcachedConnection(PoolingConnection):
             if response:
                 response = response.decode('utf-8')
         except Exception as e:
-            self.log_request_fail(method, full_url, time.time() - start, exception=e)
+            self.log_request_fail(method, full_url, body, time.time() - start, exception=e)
             raise ConnectionError('N/A', str(e), e)
         finally:
             self._release_connection(mc)
@@ -71,13 +71,13 @@ class MemcachedConnection(PoolingConnection):
                 raise TransportError('N/A', data['error'])
 
         if not (200 <= status < 300) and status not in ignore:
-            self.log_request_fail(method, url, duration, status)
+            self.log_request_fail(method, url, body, duration, status)
             self._raise_error(status, response)
 
         self.log_request_success(method, full_url, url, body, status,
             response, duration)
 
-        return status, response
+        return status, {}, response
 
 
 

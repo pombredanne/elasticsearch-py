@@ -3,39 +3,43 @@ Dynamically generated set of TestCases based on set of yaml files decribing
 some integration tests. These files are shared among all official Elasticsearch
 clients.
 """
+import re
 from os import walk, environ
 from os.path import exists, join, dirname, pardir
 import yaml
 
+from elasticsearch import TransportError
+from elasticsearch.compat import string_types
+from elasticsearch.helpers.test import _get_version
+
 from ..test_cases import SkipTest
-from . import ElasticTestCase
+from . import ElasticsearchTestCase
 
 # some params had to be changed in python, keep track of them so we can rename
 # those in the tests accordingly
 PARAMS_RENAMES = {
     'type': 'doc_type',
-    'from': 'offset',
+    'from': 'from_',
 }
 
-ES_VERSION = None
+# mapping from catch values to http status codes
+CATCH_CODES = {
+    'missing': 404,
+    'conflict': 409,
+}
 
+# test features we have implemented
+IMPLEMENTED_FEATURES = ('regex', 'gtelte')
+
+# broken YAML tests on some releases
+SKIP_TESTS = {
+    (1, 1, 2): set(('TestCatRecovery10Basic', ))
+}
 
 class InvalidActionType(Exception):
     pass
 
-def _get_version(version_string):
-    version = version_string.strip().split('.')
-    return tuple(int(v) if v.isdigit() else 999 for v in version)
-
-class YamlTestCase(ElasticTestCase):
-    @property
-    def es_version(self):
-        global ES_VERSION
-        if ES_VERSION is None:
-            version_string = self.client.info()['version']['number']
-            ES_VERSION = _get_version(version_string)
-        return ES_VERSION
-
+class YamlTestCase(ElasticsearchTestCase):
     def setUp(self):
         super(YamlTestCase, self).setUp()
         if hasattr(self, '_setup_code'):
@@ -45,15 +49,23 @@ class YamlTestCase(ElasticTestCase):
 
     def _resolve(self, value):
         # resolve variables
-        if isinstance(value, (type(u''), type(''))) and value.startswith('$'):
+        if isinstance(value, string_types) and value.startswith('$'):
             value = value[1:]
             self.assertIn(value, self._state)
             value = self._state[value]
+        if isinstance(value, string_types):
+            value = value.strip()
+        elif isinstance(value, dict):
+            value = dict((k, self._resolve(v)) for (k, v) in value.items())
+        elif isinstance(value, list):
+            value = list(map(self._resolve, value))
         return value
 
     def _lookup(self, path):
         # fetch the possibly nested value from last_response
         value = self.last_response
+        if path == '$body':
+            return value
         path = path.replace(r'\.', '\1')
         for step in path.split('.'):
             if not step:
@@ -105,33 +117,52 @@ class YamlTestCase(ElasticTestCase):
 
         try:
             self.last_response = api(**args)
-        except:
+        except Exception as e:
             if not catch:
                 raise
-            self.run_catch(catch)
+            self.run_catch(catch, e)
         else:
             if catch:
                 raise AssertionError('Failed to catch %r in %r.' % (catch, self.last_response))
 
     def run_skip(self, skip):
-        version, reason = skip['version'], skip['reason']
-        min_version, max_version = version.split('-')
-        min_version = _get_version(min_version)
-        max_version = _get_version(max_version)
-        if  min_version <= self.es_version <= max_version:
-            raise SkipTest(reason)
+        if 'features' in skip and skip['features'] not in IMPLEMENTED_FEATURES:
+            raise SkipTest(skip.get('reason', 'Feature %s is not supported' % skip['features']))
 
+        if 'version' in skip:
+            version, reason = skip['version'], skip['reason']
+            min_version, max_version = version.split('-')
+            min_version = _get_version(min_version)
+            max_version = _get_version(max_version)
+            if  min_version <= self.es_version <= max_version:
+                raise SkipTest(reason)
 
-    def run_catch(self, catch):
-        pass
+    def run_catch(self, catch, exception):
+        if catch == 'param':
+            self.assertIsInstance(exception, TypeError)
+            return
+
+        self.assertIsInstance(exception, TransportError)
+        if catch in CATCH_CODES:
+            self.assertEquals(CATCH_CODES[catch], exception.status_code)
+        elif catch[0] == '/' and catch[-1] == '/':
+            self.assertTrue(re.search(catch[1:-1], exception.error))
 
     def run_gt(self, action):
         for key, value in action.items():
             self.assertGreater(self._lookup(key), value)
 
+    def run_gte(self, action):
+        for key, value in action.items():
+            self.assertGreaterEqual(self._lookup(key), value)
+
     def run_lt(self, action):
         for key, value in action.items():
             self.assertLess(self._lookup(key), value)
+
+    def run_lte(self, action):
+        for key, value in action.items():
+            self.assertLessEqual(self._lookup(key), value)
 
     def run_set(self, action):
         for key, value in action.items():
@@ -143,11 +174,11 @@ class YamlTestCase(ElasticTestCase):
         except AssertionError:
             pass
         else:
-            self.assertFalse(value)
+            self.assertIn(value, ('', None, False, 0))
 
     def run_is_true(self, action):
         value = self._lookup(action)
-        self.assertTrue(value)
+        self.assertNotIn(value, ('', None, False, 0))
 
     def run_length(self, action):
         for path, expected in action.items():
@@ -159,7 +190,13 @@ class YamlTestCase(ElasticTestCase):
         for path, expected in action.items():
             value = self._lookup(path)
             expected = self._resolve(expected)
-            self.assertEquals(expected, value)
+
+            if isinstance(expected, string_types) and \
+                    expected.startswith('/') and expected.endswith('/'):
+                expected = re.compile(expected[1:-1], re.VERBOSE)
+                self.assertTrue(expected.search(value))
+            else:
+                self.assertEquals(expected, value)
 
 
 def construct_case(filename, name):
@@ -169,8 +206,11 @@ def construct_case(filename, name):
     """
     def make_test(test_name, definition, i):
         def m(self):
+            if name in SKIP_TESTS.get(self.es_version, ()):
+                raise SkipTest()
             self.run_code(definition)
-        m.__doc__ = '%s: %s' % ('/'.join(filename.split('/')[-2:]), test_name)
+        m.__doc__ = '%s:%s.test_from_yaml_%d (%s): %s' % (
+            __name__, name, i, '/'.join(filename.split('/')[-2:]), test_name)
         m.__name__ = 'test_from_yaml_%d' % i
         return m
 
@@ -193,11 +233,10 @@ def construct_case(filename, name):
     return type(name, (YamlTestCase, ), attrs)
 
 YAML_DIR = environ.get(
-    'YAML_TEST_DIR',
+    'TEST_ES_YAML_DIR',
     join(
-        dirname(__file__),
-        pardir, 
-        'rest-api-spec', 'test'
+        dirname(__file__), pardir, pardir, pardir,
+        'elasticsearch', 'rest-api-spec', 'test'
     )
 )
 

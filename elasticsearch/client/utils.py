@@ -1,14 +1,11 @@
+from __future__ import unicode_literals
+
 from datetime import date, datetime
 from functools import wraps
-try:
-    # PY2
-    from urllib import quote_plus
-except ImportError:
-    # PY3
-    from urllib.parse import quote_plus
+from ..compat import string_types, quote_plus
 
 # parts of URL to be omitted
-SKIP_IN_PATH = (None, '', [], ())
+SKIP_IN_PATH = (None, b'', [], ())
 
 def _escape(value):
     """
@@ -18,7 +15,7 @@ def _escape(value):
 
     # make sequences into comma-separated stings
     if isinstance(value, (list, tuple)):
-        value = u','.join(value)
+        value = ','.join(value)
 
     # dates and datetimes into isoformat
     elif isinstance(value, (date, datetime)):
@@ -29,7 +26,7 @@ def _escape(value):
         value = str(value).lower()
 
     # encode strings to utf-8
-    if isinstance(value, (type(''), type(u''))):
+    if isinstance(value, string_types):
         try:
             return value.encode('utf-8')
         except UnicodeDecodeError:
@@ -46,10 +43,10 @@ def _make_path(*parts):
     #TODO: maybe only allow some parts to be lists/tuples ?
     return '/' + '/'.join(
         # preserve ',' and '*' in url for nicer URLs in logs
-        quote_plus(_escape(p), ',*') for p in parts if p not in SKIP_IN_PATH)
+        quote_plus(_escape(p), b',*') for p in parts if p not in SKIP_IN_PATH)
 
 # parameters that apply to all methods
-GLOBAL_PARAMS = ('pretty', )
+GLOBAL_PARAMS = ('pretty', 'format')
 
 def query_params(*es_query_params):
     """
@@ -64,9 +61,10 @@ def query_params(*es_query_params):
                 if p in kwargs:
                     params[p] = _escape(kwargs.pop(p))
 
-            # don't treat ignore as other params to avoid escaping
-            if 'ignore' in kwargs:
-                params['ignore'] = kwargs.pop('ignore')
+            # don't treat ignore and request_timeout as other params to avoid escaping
+            for p in ('ignore', 'request_timeout'):
+                if p in kwargs:
+                    params[p] = kwargs.pop(p)
             return func(*args, params=params, **kwargs)
         return _wrapped
     return _wrapper

@@ -4,16 +4,16 @@ from setuptools import setup, find_packages
 import sys
 import os
 
-VERSION = (0, 4, 3)
+VERSION = (1, 2, 0, 'dev')
 __version__ = VERSION
 __versionstr__ = '.'.join(map(str, VERSION))
 
-f = open(join(dirname(__file__), 'README.rst'))
+f = open(join(dirname(__file__), 'README'))
 long_description = f.read().strip()
 f.close()
 
 install_requires = [
-    'urllib3>=1.5, <2.0',
+    'urllib3>=1.8, <2.0',
 ]
 tests_require = [
     'requests>=1.0.0, <3.0.0',
@@ -26,7 +26,7 @@ tests_require = [
 
 # use external unittest for 2.6
 if sys.version_info[:2] == (2, 6):
-    tests_require.append('unittest2')
+    install_requires.append('unittest2')
 
 if sys.version_info[0] == 2:
     # only require thrift if we are going to use it
@@ -54,7 +54,12 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python",
         "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 2.6",
+        "Programming Language :: Python :: 2.7",
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.2",
+        "Programming Language :: Python :: 3.3",
+        "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: PyPy",
     ],

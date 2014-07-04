@@ -20,9 +20,11 @@ The process for contributing to any of the Elasticsearch repositories is similar
 2. Run the test suite to ensure your changes do not break existing code:
 
     ````
-    git submodules init
     python setup.py test
     ````
+
+   See the README file in `test_elasticsearch` dirctory for more information on
+   running the test suite.
 
 3. Rebase your changes.
    Update your local repository with the most recent code from the main

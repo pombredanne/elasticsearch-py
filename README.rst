@@ -1,9 +1,41 @@
 Python Elasticsearch Client
 ===========================
 
-Official low-level client for Elasticsearch. It's goal is to provide common
+Official low-level client for Elasticsearch. Its goal is to provide common
 ground for all Elasticsearch-related code in Python; because of this it tries
 to be opinion-free and very extendable.
+
+Compatibility
+-------------
+
+The library is compatible with both Elasticsearch 1.x and 0.90.x but you
+**have to use a matching version**.
+
+For **Elasticsearch 1.0** and later, use the major version 1 (``1.x.y``) of the
+library.
+
+For **Elasticsearch 0.90.x**, use a version from ``0.4.x`` releases of the
+library.
+
+The recommended way to set your requirements in your `setup.py` or
+`requirements.txt` is::
+
+    # Elasticsearch 1.0
+    elasticsearch>=1.0.0,<2.0.0
+
+    # Elasticsearch 0.90
+    elasticsearch<1.0.0
+
+The development is happening on ``master`` and ``0.4`` branches, respectively.
+
+
+Installation
+------------
+
+Install the ``elasticsearch`` package with `pip
+<https://pypi.python.org/pypi/elasticsearch>`_::
+
+    pip install elasticsearch
 
 
 Example use
@@ -16,6 +48,10 @@ Simple use-case::
 
     # by default we connect to localhost:9200
     >>> es = Elasticsearch()
+
+    # create an index in elasticsearch, ignore status code 400 (index already exists)
+    >>> es.indices.create(index='my-index', ignore=400)
+    {u'acknowledged': True}
 
     # datetimes will be serialized
     >>> es.index(index="my-index", doc_type="test-type", id=42, body={"any": "data", "timestamp": datetime.now()})
@@ -39,7 +75,7 @@ The client's features include:
    decoded for performance reasons)
  * configurable automatic discovery of cluster nodes
  * persistent connections
- * load balancing (with pluggable selection strategy) across all availible nodes
+ * load balancing (with pluggable selection strategy) across all available nodes
  * failed connection penalization (time based - failed connections won't be
    retried until a timeout is reached)
  * thread safety
@@ -69,5 +105,3 @@ Build status
 .. image:: https://secure.travis-ci.org/elasticsearch/elasticsearch-py.png
    :target: http://travis-ci.org/#!/elasticsearch/elasticsearch-py
 
-.. image:: https://coveralls.io/repos/elasticsearch/elasticsearch-py/badge.png?branch=master
-   :target: https://coveralls.io/r/elasticsearch/elasticsearch-py

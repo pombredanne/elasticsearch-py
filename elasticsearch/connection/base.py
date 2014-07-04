@@ -1,5 +1,8 @@
 import logging
-import json
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 from ..exceptions import TransportError, HTTP_EXCEPTIONS
 
@@ -28,7 +31,7 @@ class Connection(object):
         if url_prefix:
             url_prefix = '/' + url_prefix.strip('/')
         self.url_prefix = url_prefix
-        self.timeout = 10
+        self.timeout = timeout
 
     def __repr__(self):
         return '<%s: %s>' % (self.__class__.__name__, self.host)
@@ -39,10 +42,15 @@ class Connection(object):
         def _pretty_json(data):
             # pretty JSON in tracer curl logs
             try:
-                return json.dumps(json.loads(data), sort_keys=True, indent=2, separators=(',', ': '))
+                return json.dumps(json.loads(data), sort_keys=True, indent=2, separators=(',', ': ')).replace("'", r'\u0027')
             except (ValueError, TypeError):
                 # non-json data or a bulk request
-                return repr(data)
+                return data
+
+        # body has already been serialized to utf-8, deserialize it for logging
+        # TODO: find a better way to avoid (de)encoding the body back and forth
+        if body:
+            body = body.decode('utf-8')
 
         logger.info(
             '%s %s [status:%s request:%.3fs]', method, full_url,
@@ -61,12 +69,19 @@ class Connection(object):
         if tracer.isEnabledFor(logging.DEBUG):
             tracer.debug('#[%s] (%.3fs)\n#%s', status_code, duration, _pretty_json(response).replace('\n', '\n#') if response else '')
 
-    def log_request_fail(self, method, full_url, duration, status_code=None, exception=None):
+    def log_request_fail(self, method, full_url, body, duration, status_code=None, exception=None):
         """ Log an unsuccessful API call.  """
         logger.warning(
             '%s %s [status:%s request:%.3fs]', method, full_url,
             status_code or 'N/A', duration, exc_info=exception is not None
         )
+
+        # body has already been serialized to utf-8, deserialize it for logging
+        # TODO: find a better way to avoid (de)encoding the body back and forth
+        if body:
+            body = body.decode('utf-8')
+
+        logger.info('> %s', body)
 
     def _raise_error(self, status_code, raw_data):
         """ Locate appropriate exception and raise it. """

@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals
 import time
 
 from elasticsearch.transport import Transport
@@ -10,6 +12,7 @@ class DummyConnection(Connection):
     def __init__(self, **kwargs):
         self.exception = kwargs.pop('exception', None)
         self.status, self.data = kwargs.pop('status', 200), kwargs.pop('data', '{}')
+        self.headers = kwargs.pop('headers', {})
         self.calls = []
         super(DummyConnection, self).__init__(**kwargs)
 
@@ -17,7 +20,7 @@ class DummyConnection(Connection):
         self.calls.append((args, kwargs))
         if self.exception:
             raise self.exception
-        return self.status, self.data
+        return self.status, self.headers, self.data
 
 CLUSTER_NODES = '''{
     "ok" : true,
@@ -35,6 +38,36 @@ CLUSTER_NODES = '''{
 }'''
 
 class TestTransport(TestCase):
+    def test_request_timeout_extracted_from_params_and_passed(self):
+        t = Transport([{}], connection_class=DummyConnection)
+
+        t.perform_request('GET', '/', params={'request_timeout': 42})
+        self.assertEquals(1, len(t.get_connection().calls))
+        self.assertEquals(('GET', '/', {}, None), t.get_connection().calls[0][0])
+        self.assertEquals({'timeout': 42, 'ignore': ()}, t.get_connection().calls[0][1])
+
+    def test_send_get_body_as_source(self):
+        t = Transport([{}], send_get_body_as='source', connection_class=DummyConnection)
+
+        t.perform_request('GET', '/', body={})
+        self.assertEquals(1, len(t.get_connection().calls))
+        self.assertEquals(('GET', '/', {'source': '{}'}, None), t.get_connection().calls[0][0])
+
+    def test_send_get_body_as_post(self):
+        t = Transport([{}], send_get_body_as='POST', connection_class=DummyConnection)
+
+        t.perform_request('GET', '/', body={})
+        self.assertEquals(1, len(t.get_connection().calls))
+        self.assertEquals(('POST', '/', None, b'{}'), t.get_connection().calls[0][0])
+
+    def test_body_gets_encoded_into_bytes(self):
+        t = Transport([{}], connection_class=DummyConnection)
+
+        t.perform_request('GET', '/', body='你好')
+        self.assertEquals(1, len(t.get_connection().calls))
+        self.assertEquals(('GET', '/', None, b'\xe4\xbd\xa0\xe5\xa5\xbd'), t.get_connection().calls[0][0])
+
+
     def test_kwargs_passed_on_to_connections(self):
         t = Transport([{'host': 'google.com'}], port=123)
         self.assertEquals(1, len(t.connection_pool.connections))

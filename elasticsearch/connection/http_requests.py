@@ -4,13 +4,10 @@ try:
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
-try:
-    from urllib import urlencode
-except ImportError:
-    from urllib.parse import urlencode
 
 from .base import Connection
 from ..exceptions import ConnectionError, ImproperlyConfigured
+from ..compat import urlencode
 
 class RequestsHttpConnection(Connection):
     """
@@ -48,14 +45,14 @@ class RequestsHttpConnection(Connection):
             duration = time.time() - start
             raw_data = response.text
         except (requests.ConnectionError, requests.Timeout) as e:
-            self.log_request_fail(method, url, time.time() - start, exception=e)
+            self.log_request_fail(method, url, body, time.time() - start, exception=e)
             raise ConnectionError('N/A', str(e), e)
 
         # raise errors based on http status codes, let the client handle those if needed
         if not (200 <= response.status_code < 300) and response.status_code not in ignore:
-            self.log_request_fail(method, url, duration, response.status_code)
+            self.log_request_fail(method, url, body, duration, response.status_code)
             self._raise_error(response.status_code, raw_data)
 
         self.log_request_success(method, url, response.request.path_url, body, response.status_code, raw_data, duration)
 
-        return response.status_code, raw_data
+        return response.status_code, response.headers, raw_data

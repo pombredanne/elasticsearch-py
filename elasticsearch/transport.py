@@ -3,7 +3,7 @@ import time
 
 from .connection import Urllib3HttpConnection
 from .connection_pool import ConnectionPool
-from .serializer import JSONSerializer
+from .serializer import JSONSerializer, Deserializer, DEFAULT_SERIALIZERS
 from .exceptions import ConnectionError, TransportError, SerializationError
 
 # get ip/port from "inet[wind/127.0.0.1:9200]"
@@ -34,9 +34,10 @@ class Transport(object):
     """
     def __init__(self, hosts, connection_class=Urllib3HttpConnection,
         connection_pool_class=ConnectionPool, host_info_callback=get_host_info,
-        sniff_on_start=False, sniffer_timeout=None,
-        sniff_on_connection_fail=False, serializer=JSONSerializer(),
-        max_retries=3, **kwargs):
+        sniff_on_start=False, sniffer_timeout=None, sniff_timeout=.1,
+        sniff_on_connection_fail=False, serializer=JSONSerializer(), serializers=None,
+        default_mimetype='application/json', max_retries=3,
+        send_get_body_as='GET', **kwargs):
         """
         :arg hosts: list of dictionaries, each containing keyword arguments to
             create a `connection_class` instance
@@ -48,16 +49,39 @@ class Transport(object):
         :arg sniff_on_start: flag indicating whether to obtain a list of nodes
             from the cluser at startup time
         :arg sniffer_timeout: number of seconds between automatic sniffs
-        :arg sniff_on_connection_fail: flasg controlling if connection failure triggers a sniff
+        :arg sniff_on_connection_fail: flag controlling if connection failure triggers a sniff
+        :arg sniff_timeout: timeout used for the sniff request - it should be a
+            fast api call and we are talking potentially to more nodes so we want
+            to fail quickly.
         :arg serializer: serializer instance
+        :arg serializers: optional dict of serializer instances that will be
+            used for deserializing data coming from the server. (key is the mimetype)
+        :arg default_mimetype: when no mimetype is specified by the server
+            response assume this mimetype, defaults to `'application/json'`
         :arg max_retries: maximum number of retries before an exception is propagated
+        :arg send_get_body_as: for GET requests with body this option allows
+            you to specify an alternate way of execution for environments that
+            don't support passing bodies with GET requests. If you set this to
+            'POST' a POST method will be used instead, if to 'source' then the body
+            will be serialized and passed as a query parameter `source`.
 
         Any extra keyword arguments will be passed to the `connection_class`
         when creating and instance unless overriden by that connection's
         options provided as part of the hosts parameter.
         """
 
+        # serialization config
+        _serializers = DEFAULT_SERIALIZERS.copy()
+        # if a serializer has been specified, use it for deserialization as well
+        _serializers[serializer.mimetype] = serializer
+        # if custom serializers map has been supplied, override the defaults with it
+        if serializers:
+            _serializers.update(serializers)
+        # create a deserializer with our config
+        self.deserializer = Deserializer(_serializers, default_mimetype)
+
         self.max_retries = max_retries
+        self.send_get_body_as = send_get_body_as
 
         # data serializer
         self.serializer = serializer
@@ -79,6 +103,7 @@ class Transport(object):
         self.sniffer_timeout = sniffer_timeout
         self.sniff_on_connection_fail = sniff_on_connection_fail
         self.last_sniff = time.time()
+        self.sniff_timeout = sniff_timeout
 
         # callback to construct host dict from data in /_cluster/nodes
         self.host_info_callback = host_info_callback
@@ -148,13 +173,14 @@ class Transport(object):
             for c in self.connection_pool.connections + self.seed_connections:
                 try:
                     # use small timeout for the sniffing request, should be a fast api call
-                    _, node_info = c.perform_request('GET', '/_cluster/nodes', timeout=.1)
-                    node_info = self.serializer.loads(node_info)
+                    _, headers, node_info = c.perform_request('GET', '/_nodes/_all/clear',
+                        timeout=self.sniff_timeout)
+                    node_info = self.deserializer.loads(node_info, headers.get('content-type'))
                     break
                 except (ConnectionError, SerializationError):
                     pass
             else:
-                raise TransportError("Enable to sniff hosts.")
+                raise TransportError("N/A", "Unable to sniff hosts.")
         except:
             # keep the previous value on error
             self.last_sniff = previous_sniff
@@ -177,7 +203,7 @@ class Transport(object):
         # we weren't able to get any nodes, maybe using an incompatible
         # transport_schema or host_info_callback blocked all - raise error.
         if not hosts:
-            raise TransportError("Enable to sniff hosts - no viable hosts found.")
+            raise TransportError("N/A", "Unable to sniff hosts - no viable hosts found.")
 
         self.set_connections(hosts)
 
@@ -215,9 +241,31 @@ class Transport(object):
         if body is not None:
             body = self.serializer.dumps(body)
 
+            # some clients or environments don't support sending GET with body
+            if method == 'GET' and self.send_get_body_as != 'GET':
+                # send it as post instead
+                if self.send_get_body_as == 'POST':
+                    method = 'POST'
+
+                # or as source parameter
+                elif self.send_get_body_as == 'source':
+                    if params is None:
+                        params = {}
+                    params['source'] = body
+                    body = None
+
+        if body is not None:
+            try:
+                body = body.encode('utf-8')
+            except UnicodeDecodeError:
+                # Python 2 and str, no need to re-encode
+                pass
+
         ignore = ()
-        if params and 'ignore' in params:
-            ignore = params.pop('ignore')
+        timeout = None
+        if params:
+            timeout = params.pop('request_timeout', None)
+            ignore = params.pop('ignore', ())
             if isinstance(ignore, int):
                 ignore = (ignore, )
 
@@ -225,7 +273,7 @@ class Transport(object):
             connection = self.get_connection()
 
             try:
-                status, raw_data = connection.perform_request(method, url, params, body, ignore=ignore)
+                status, headers, data = connection.perform_request(method, url, params, body, ignore=ignore, timeout=timeout)
             except ConnectionError:
                 self.mark_dead(connection)
 
@@ -235,8 +283,7 @@ class Transport(object):
             else:
                 # connection didn't fail, confirm it's live status
                 self.connection_pool.mark_live(connection)
-                data = None
-                if raw_data:
-                    data = self.serializer.loads(raw_data)
+                if data:
+                    data = self.deserializer.loads(data, headers.get('content-type'))
                 return status, data
 

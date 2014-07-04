@@ -7,7 +7,7 @@ class ClusterClient(NamespacedClient):
     def health(self, index=None, params=None):
         """
         Get a very simple status on the health of the cluster.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-health/>`_
+        `<http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-health.html>`_
 
         :arg index: Limit the information returned to a specific index
         :arg level: Specify the level of detail for returned information, default u'cluster'
@@ -23,131 +23,103 @@ class ClusterClient(NamespacedClient):
             params=params)
         return data
 
-    @query_params('filter_blocks', 'filter_index_templates', 'filter_indices',
-        'filter_metadata', 'filter_nodes', 'filter_routing_table', 'local',
-        'master_timeout')
-    def state(self, params=None):
+    @query_params('local', 'master_timeout')
+    def pending_tasks(self, params=None):
         """
-        Get a comprehensive state information of the whole cluster.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-state/>`_
+        The pending cluster tasks API returns a list of any cluster-level
+        changes (e.g. create index, update mapping, allocate or fail shard)
+        which have not yet been executed.
+        `<http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-pending.html>`_
 
-        :arg filter_blocks: Do not return information about blocks
-        :arg filter_index_templates: Do not return information about index templates
-        :arg filter_indices: Limit returned metadata information to specific indices
-        :arg filter_metadata: Do not return information about indices metadata
-        :arg filter_nodes: Do not return information about nodes
-        :arg filter_routing_table: Do not return information about shard allocation (`routing_table` and `routing_nodes`)
         :arg local: Return local information, do not retrieve the state from master node (default: false)
         :arg master_timeout: Specify timeout for connection to master
         """
-        _, data = self.transport.perform_request('GET', '/_cluster/state', params=params)
+        _, data = self.transport.perform_request('GET', '/_cluster/pending_tasks',
+            params=params)
         return data
 
+    @query_params('index_templates', 'local', 'master_timeout', 'flat_settings')
+    def state(self, metric=None, index=None, params=None):
+        """
+        Get a comprehensive state information of the whole cluster.
+        `<http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-state.html>`_
 
-    @query_params('dry_run', 'filter_metadata')
+        :arg metric: Limit the information returned to the specified metrics.
+            Possible values: "_all", "blocks", "index_templates", "metadata",
+            "nodes", "routing_table", "master_node", "version"
+        :arg index: A comma-separated list of index names; use `_all` or empty
+            string to perform the operation on all indices
+        :arg index_templates: A comma separated list to return specific index
+            templates when returning metadata.
+        :arg local: Return local information, do not retrieve the state from master node (default: false)
+        :arg master_timeout: Specify timeout for connection to master
+        :arg flat_settings: Return settings in flat format (default: false)
+        """
+        if index and not metric:
+            metric = '_all'
+        _, data = self.transport.perform_request('GET', _make_path('_cluster', 'state', metric, index), params=params)
+        return data
+
+    @query_params('flat_settings', 'human')
+    def stats(self, node_id=None, params=None):
+        """
+        The Cluster Stats API allows to retrieve statistics from a cluster wide
+        perspective. The API returns basic index metrics and information about
+        the current nodes that form the cluster.
+        `<http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-stats.html>`_
+
+        :arg node_id: A comma-separated list of node IDs or names to limit the
+            returned information; use `_local` to return information from the node
+            you're connecting to, leave empty to get information from all nodes
+        :arg flat_settings: Return settings in flat format (default: false)
+        :arg human: Whether to return time and byte values in human-readable format.
+
+        """
+        url = '/_cluster/stats'
+        if node_id:
+            url = _make_path('_cluster/stats/nodes', node_id)
+        _, data = self.transport.perform_request('GET', url, params=params)
+        return data
+
+    @query_params('dry_run', 'explain', 'filter_metadata', 'master_timeout', 'timeout')
     def reroute(self, body=None, params=None):
         """
         Explicitly execute a cluster reroute allocation command including specific commands.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-reroute/>`_
+        `<http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-reroute.html>`_
 
         :arg body: The definition of `commands` to perform (`move`, `cancel`, `allocate`)
         :arg dry_run: Simulate the operation only and return the resulting state
+        :arg explain: Return an explanation of why the commands can or cannot be executed
         :arg filter_metadata: Don't return cluster state metadata (default: false)
+        :arg master_timeout: Explicit operation timeout for connection to master node
+        :arg timeout: Explicit operation timeout
         """
         _, data = self.transport.perform_request('POST', '/_cluster/reroute', params=params, body=body)
         return data
 
-    @query_params()
+    @query_params('flat_settings', 'master_timeout', 'timeout')
     def get_settings(self, params=None):
         """
         Get cluster settings.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-update-settings/>`_
+        `<http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-update-settings.html>`_
+
+        :arg flat_settings: Return settings in flat format (default: false)
+        :arg master_timeout: Explicit operation timeout for connection to master node
+        :arg timeout: Explicit operation timeout
         """
         _, data = self.transport.perform_request('GET', '/_cluster/settings', params=params)
         return data
 
-    @query_params()
+    @query_params('flat_settings')
     def put_settings(self, body, params=None):
         """
         Update cluster wide specific settings.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-update-settings/>`_
+        `<http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-update-settings.html>`_
 
         :arg body: The settings to be updated. Can be either `transient` or
             `persistent` (survives cluster restart).
+        :arg flat_settings: Return settings in flat format (default: false)
         """
         _, data = self.transport.perform_request('PUT', '/_cluster/settings', params=params, body=body)
-        return data
-
-    @query_params('all', 'clear', 'fields', 'fs', 'http', 'indices', 'jvm',
-        'network', 'os', 'process', 'thread_pool', 'transport')
-    def node_stats(self, node_id=None, metric=None, fields=None, params=None):
-        """
-        Retrieve one or more (or all) of the cluster nodes statistics.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-nodes-stats/>`_
-
-        :arg node_id: A comma-separated list of node IDs or names to limit the
-            returned information; use `_local` to return information from the node
-            you're connecting to, leave empty to get information from all nodes
-        :arg metric: Limit the information returned for `indices` family to a specific metric
-        :arg fields: A comma-separated list of fields to return detailed information
-            for, when returning the `indices` metric family (supports wildcards)
-        :arg all: Return all available information
-        :arg clear: Reset the default level of detail
-        :arg fields: A comma-separated list of fields for `fielddata` metric (supports wildcards)
-        :arg fs: Return information about the filesystem
-        :arg http: Return information about HTTP
-        :arg indices: Return information about indices
-        :arg jvm: Return information about the JVM
-        :arg network: Return information about network
-        :arg os: Return information about the operating system
-        :arg process: Return information about the Elasticsearch process
-        :arg thread_pool: Return information about the thread pool
-        :arg transport: Return information about transport
-        """
-        _, data = self.transport.perform_request('GET',
-            _make_path('_nodes', node_id, 'stats', metric, fields), params=params)
-        return data
-
-    @query_params('all', 'clear', 'http', 'jvm', 'network', 'os', 'plugin',
-        'process', 'settings', 'thread_pool', 'timeout', 'transport')
-    def node_info(self, node_id=None, params=None):
-        """
-        Retrieve one or more (or all) of the cluster nodes' information.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-nodes-info/>`_
-
-        :arg node_id: A comma-separated list of node IDs or names to limit the
-            returned information; use `_local` to return information from the node
-            you're connecting to, leave empty to get information from all nodes
-        :arg all: Return all available information
-        :arg clear: Reset the default settings
-        :arg http: Return information about HTTP
-        :arg jvm: Return information about the JVM
-        :arg network: Return information about network
-        :arg os: Return information about the operating system
-        :arg plugin: Return information about plugins
-        :arg process: Return information about the Elasticsearch process
-        :arg settings: Return information about node settings
-        :arg thread_pool: Return information about the thread pool
-        :arg timeout: Explicit operation timeout
-        :arg transport: Return information about transport
-        """
-        _, data = self.transport.perform_request('GET',
-            _make_path('_cluster', 'nodes', node_id), params=params)
-        return data
-
-    @query_params('delay', 'exit')
-    def node_shutdown(self, node_id=None, params=None):
-        """
-        Shutdown one or more (or all) nodes in the cluster.
-        `<http://elasticsearch.org/guide/reference/api/admin-cluster-nodes-shutdown/>`_
-
-        :arg node_id: A comma-separated list of node IDs or names to perform
-            the operation on; use `_local` to perform the operation on the node
-            you're connected to, leave empty to perform the operation on all nodes
-        :arg delay: Set the delay for the operation (default: 1s)
-        :arg exit: Exit the JVM as well (default: true)
-        """
-        _, data = self.transport.perform_request('POST',
-            _make_path('_cluster', 'nodes', node_id, '_shutdown'), params=params)
         return data
 
